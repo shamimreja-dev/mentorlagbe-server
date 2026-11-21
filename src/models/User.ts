@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Document, Schema, Types } from "mongoose";
 import { UserPlan, UserRole } from "../types/index.js";
 
 export interface IUser extends Document {
@@ -11,6 +11,7 @@ export interface IUser extends Document {
   isVerifiedTutor: boolean;
   bio: string;
   stripeCustomerId?: string;
+  bookmarkedTuitions: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,6 +41,12 @@ const userSchema = new Schema<IUser>(
     isVerifiedTutor: { type: Boolean, default: false },
     bio: { type: String, default: "", trim: true },
     stripeCustomerId: { type: String, default: "" },
+    bookmarkedTuitions: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Tuition",
+      },
+    ],
   },
   { timestamps: true }
 );

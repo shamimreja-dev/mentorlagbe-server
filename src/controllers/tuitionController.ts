@@ -3,15 +3,26 @@ import { Tuition } from "../models/Tuition.js";
 import { User } from "../models/User.js";
 import { AuthRequest } from "../types/index.js";
 
-// Public: Get all Approved tuitions with search & filters
+// Public / Filtered: Get tuitions (defaults to Approved when status query is omitted)
 export const getAllApprovedTuitions = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const { search, subject, mode, maxFee } = req.query;
+    const { search, subject, mode, maxFee, status } = req.query;
 
-    const filter: Record<string, unknown> = { status: "Approved" };
+    const filter: Record<string, unknown> = {};
+
+    if (!status) {
+      filter.status = "Approved";
+    } else if (String(status) !== "All") {
+      const normalizedStatus = String(status).trim();
+      const allowedStatuses = ["Pending", "Approved", "Rejected"];
+      const matched = allowedStatuses.find(
+        (s) => s.toLowerCase() === normalizedStatus.toLowerCase()
+      );
+      filter.status = matched || normalizedStatus;
+    }
 
     if (subject && subject !== "All") {
       filter.subject = String(subject);
@@ -211,7 +222,56 @@ export const createTuition = async (
   }
 };
 
-// Tutor: Delete own tuition
+// Admin: Approve or Reject a tuition listing
+export const moderateTuitionStatus = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: "Unauthorized." });
+      return;
+    }
+
+    const { status } = req.body as { status?: string };
+    const validStatuses = ["Pending", "Approved", "Rejected"];
+    if (!status || !validStatuses.includes(status)) {
+      res.status(400).json({
+        success: false,
+        message: "Status must be Pending, Approved, or Rejected.",
+      });
+      return;
+    }
+
+    const tuition = await Tuition.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+
+    if (!tuition) {
+      res.status(404).json({
+        success: false,
+        message: "Tuition listing not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Tuition marked as ${status}.`,
+      tuition,
+    });
+  } catch (error) {
+    console.error("Moderate tuition error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update tuition status.",
+    });
+  }
+};
+
+// Tutor / Admin: Delete tuition
 export const deleteOwnTuition = async (
   req: AuthRequest,
   res: Response
@@ -222,10 +282,12 @@ export const deleteOwnTuition = async (
       return;
     }
 
-    const tuition = await Tuition.findOneAndDelete({
-      _id: req.params.id,
-      tutorId: req.user.userId,
-    });
+    const query =
+      req.user.role === "admin"
+        ? { _id: req.params.id }
+        : { _id: req.params.id, tutorId: req.user.userId };
+
+    const tuition = await Tuition.findOneAndDelete(query);
 
     if (!tuition) {
       res.status(404).json({

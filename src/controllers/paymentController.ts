@@ -95,7 +95,6 @@ export const createCheckoutSession = async (
       user.role === "tutor" ? PRO_PLANS.tutor : PRO_PLANS.student;
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       mode: "payment",
       customer_email: user.email,
       line_items: [
@@ -129,9 +128,13 @@ export const createCheckoutSession = async (
     });
   } catch (error) {
     console.error("Stripe checkout error:", error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to initiate Stripe checkout session.";
     res.status(500).json({
       success: false,
-      message: "Failed to initiate Stripe checkout session.",
+      message,
     });
   }
 };
@@ -193,9 +196,13 @@ export const verifyCheckoutSession = async (
     });
   } catch (error) {
     console.error("Verify checkout session error:", error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to verify Stripe payment session.";
     res.status(500).json({
       success: false,
-      message: "Failed to verify Stripe payment session.",
+      message,
     });
   }
 };

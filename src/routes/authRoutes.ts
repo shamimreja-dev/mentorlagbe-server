@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getCurrentUser,
+  handleGoogleCallbackSync,
   loginUser,
   registerUser,
   updateProfile,
@@ -11,6 +12,7 @@ const router = Router();
 
 router.post("/register", registerUser);
 router.post("/login", loginUser);
+router.get("/google/callback", handleGoogleCallbackSync);
 router.get("/me", authenticate, getCurrentUser);
 router.patch("/profile", authenticate, updateProfile);
 

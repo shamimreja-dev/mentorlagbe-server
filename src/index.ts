@@ -1,5 +1,7 @@
 import express from "express";
+import { toNodeHandler } from "better-auth/node";
 import cors from "cors";
+import { getAuth } from "./lib/auth.js";
 import { env } from "./config/env.js";
 import { connectDB } from "./config/db.js";
 import { handleStripeWebhook } from "./controllers/paymentController.js";
@@ -8,6 +10,7 @@ import tuitionRoutes from "./routes/tuitionRoutes.js";
 import applicationRoutes from "./routes/applicationRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import bookmarkRoutes from "./routes/bookmarkRoutes.js";
 import {
   globalErrorHandler,
   notFoundHandler,
@@ -30,6 +33,12 @@ app.post(
   handleStripeWebhook
 );
 
+// Better Auth handler (mount before express.json() so request body streams stay intact)
+app.all("/api/better-auth/{*splat}", (req, res) => {
+  const handler = toNodeHandler(getAuth());
+  return handler(req, res);
+});
+
 // Body parser
 app.use(express.json());
 
@@ -49,6 +58,7 @@ app.use("/api/tuitions", tuitionRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/bookmarks", bookmarkRoutes);
 
 // 404 & Global error handlers
 app.use(notFoundHandler);

@@ -11,4 +11,9 @@ export const env = {
   clientUrl: process.env.CLIENT_URL || "http://localhost:3000",
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+  betterAuthSecret:
+    process.env.BETTER_AUTH_SECRET || "mentorlagbe_better_auth_secret_2026",
+  betterAuthUrl: process.env.BETTER_AUTH_URL || "http://localhost:5000",
+  googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
 };

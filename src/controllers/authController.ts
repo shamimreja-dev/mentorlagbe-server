@@ -1,5 +1,9 @@
+import crypto from "crypto";
 import { Response } from "express";
 import bcrypt from "bcryptjs";
+import { fromNodeHeaders } from "better-auth/node";
+import { getAuth } from "../lib/auth.js";
+import { env } from "../config/env.js";
 import { User } from "../models/User.js";
 import { AuthRequest, UserRole } from "../types/index.js";
 import { signAccessToken } from "../utils/jwt.js";
@@ -142,6 +146,85 @@ export const loginUser = async (
       success: false,
       message: "Failed to sign in.",
     });
+  }
+};
+
+export const handleGoogleCallbackSync = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const requestedRole: Exclude<UserRole, "admin"> =
+      req.query.role === "tutor" ? "tutor" : "student";
+
+    const session = await getAuth().api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    if (!session?.user?.email) {
+      res.redirect(
+        `${env.clientUrl}/sign-in?error=${encodeURIComponent(
+          "Google authentication failed or session was not found."
+        )}`
+      );
+      return;
+    }
+
+    const normalizedEmail = session.user.email.toLowerCase().trim();
+    let user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      const randomPassword = crypto.randomBytes(24).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+      user = await User.create({
+        name: session.user.name?.trim() || normalizedEmail.split("@")[0],
+        email: normalizedEmail,
+        password: hashedPassword,
+        phone: "Not provided",
+        role: requestedRole,
+        plan: "free",
+        isVerifiedTutor: false,
+        bio: "",
+      });
+    } else if (user.role !== "admin" && req.query.role) {
+      user.role = requestedRole;
+      await user.save();
+    }
+
+    const token = signAccessToken({
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      plan: user.plan,
+    });
+
+    const redirectUrl = new URL(`${env.clientUrl}/auth/google-callback`);
+    redirectUrl.searchParams.set("token", token);
+    redirectUrl.searchParams.set(
+      "user",
+      encodeURIComponent(
+        JSON.stringify({
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          plan: user.plan,
+          isVerifiedTutor: user.isVerifiedTutor,
+          bio: user.bio,
+        })
+      )
+    );
+
+    res.redirect(redirectUrl.toString());
+  } catch (error) {
+    console.error("Google callback sync error:", error);
+    res.redirect(
+      `${env.clientUrl}/sign-in?error=${encodeURIComponent(
+        "Failed to complete Google sign-in."
+      )}`
+    );
   }
 };
 
