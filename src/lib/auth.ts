@@ -23,9 +23,13 @@ const getMongoDb = () => {
   return db as unknown as Parameters<typeof mongodbAdapter>[0];
 };
 
-const isProduction = env.nodeEnv === "production";
 const normalizedBaseUrl = normalizeAuthBaseUrl(env.betterAuthUrl);
 const normalizedClientUrl = stripTrailingSlash(env.clientUrl);
+
+const isHttpsDeployment =
+  env.nodeEnv === "production" ||
+  Boolean(normalizedBaseUrl?.startsWith("https://")) ||
+  Boolean(normalizedClientUrl?.startsWith("https://"));
 
 // Allowed frontend & backend origins
 const trustedOrigins = [
@@ -108,14 +112,24 @@ const createAuth = () =>
       return trustedOrigins;
     },
 
-    // Cookie configuration for cross-origin requests
+    // Cookie configuration for cross-origin OAuth & session requests
     advanced: {
-      useSecureCookies: isProduction,
+      useSecureCookies: isHttpsDeployment,
       defaultCookieAttributes: {
-        sameSite: isProduction ? "none" : "lax",
-        secure: isProduction,
+        sameSite: isHttpsDeployment ? "none" : "lax",
+        secure: isHttpsDeployment,
         httpOnly: true,
         path: "/",
+      },
+      cookies: {
+        state: {
+          attributes: {
+            sameSite: isHttpsDeployment ? "none" : "lax",
+            secure: isHttpsDeployment,
+            httpOnly: true,
+            path: "/",
+          },
+        },
       },
     },
   });
