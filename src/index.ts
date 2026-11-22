@@ -1,4 +1,3 @@
-
 import express from "express";
 import { toNodeHandler } from "better-auth/node";
 import cors from "cors";
@@ -21,6 +20,8 @@ import {
   notFoundHandler,
 } from "./middleware/errorMiddleware.js";
 
+const stripTrailingSlash = (url?: string) => url?.trim().replace(/\/+$/, "");
+
 const app = express();
 
 // Render / reverse proxy support
@@ -28,15 +29,27 @@ app.set("trust proxy", 1);
 
 // Allowed frontend origins
 const allowedOrigins = [
-  env.clientUrl,
-  ...(env.nodeEnv !== "production" ? ["http://localhost:3000"] : []),
-];
+  stripTrailingSlash(env.clientUrl),
+  "https://mentorlagbe-client-khaki.vercel.app",
+  ...(env.nodeEnv !== "production"
+    ? ["http://localhost:3000", "http://localhost:5173"]
+    : []),
+].filter((origin, index, list): origin is string => {
+  return Boolean(origin) && list.indexOf(origin) === index;
+});
 
 // CORS
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -87,9 +100,7 @@ const startServer = async (): Promise<void> => {
     await connectDB();
 
     app.listen(env.port, () => {
-      console.log(
-        `MentorLagbe server running on port ${env.port}`
-      );
+      console.log(`MentorLagbe server running on port ${env.port}`);
       console.log(`Better Auth: ${env.betterAuthUrl}/api/better-auth`);
     });
   } catch (error) {

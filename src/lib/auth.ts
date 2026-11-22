@@ -1,8 +1,9 @@
-
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import mongoose from "mongoose";
 import { env } from "../config/env.js";
+
+const stripTrailingSlash = (url?: string) => url?.trim().replace(/\/+$/, "");
 
 // Get the existing MongoDB connection
 const getMongoDb = () => {
@@ -18,13 +19,17 @@ const getMongoDb = () => {
 };
 
 const isProduction = env.nodeEnv === "production";
+const normalizedBaseUrl = stripTrailingSlash(env.betterAuthUrl);
 
-// Allowed frontend origins
+// Allowed frontend & backend origins
 const trustedOrigins = [
   "http://localhost:3000",
-  env.clientUrl,
+  "http://localhost:5000",
+  stripTrailingSlash(env.clientUrl),
+  normalizedBaseUrl,
   "https://mentorlagbe-client-khaki.vercel.app",
-].filter((origin, index, origins) => {
+  "https://mentorlagbe-server-fy1s.onrender.com",
+].filter((origin, index, origins): origin is string => {
   return Boolean(origin) && origins.indexOf(origin) === index;
 });
 
@@ -32,7 +37,7 @@ const trustedOrigins = [
 const createAuth = () =>
   betterAuth({
     // Backend URL
-    baseURL: env.betterAuthUrl,
+    baseURL: normalizedBaseUrl,
 
     // Better Auth API prefix
     basePath: "/api/better-auth",
@@ -70,11 +75,12 @@ const createAuth = () =>
       },
     },
 
-    // Allowed frontend origins
+    // Allowed origins
     trustedOrigins,
 
-    // Cookie configuration
+    // Cookie configuration for cross-origin requests
     advanced: {
+      useSecureCookies: isProduction,
       defaultCookieAttributes: {
         sameSite: isProduction ? "none" : "lax",
         secure: isProduction,
