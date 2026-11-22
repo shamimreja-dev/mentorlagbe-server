@@ -31,6 +31,7 @@ app.set("trust proxy", 1);
 const allowedOrigins = [
   stripTrailingSlash(env.clientUrl),
   "https://mentorlagbe-client-khaki.vercel.app",
+  "https://mentorlagbe-client-9froqksxc-shamim-reja232.vercel.app",
   ...(env.nodeEnv !== "production"
     ? ["http://localhost:3000", "http://localhost:5173"]
     : []),
@@ -38,11 +39,32 @@ const allowedOrigins = [
   return Boolean(origin) && list.indexOf(origin) === index;
 });
 
+const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true;
+  const cleaned = stripTrailingSlash(origin) || "";
+  if (allowedOrigins.includes(cleaned)) return true;
+
+  try {
+    const parsed = new URL(cleaned);
+    if (
+      parsed.protocol === "https:" &&
+      parsed.hostname.startsWith("mentorlagbe-client") &&
+      parsed.hostname.endsWith(".vercel.app")
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+};
+
 // CORS
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
       return callback(new Error(`Not allowed by CORS: ${origin}`));

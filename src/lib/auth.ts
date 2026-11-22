@@ -28,6 +28,7 @@ const trustedOrigins = [
   stripTrailingSlash(env.clientUrl),
   normalizedBaseUrl,
   "https://mentorlagbe-client-khaki.vercel.app",
+  "https://mentorlagbe-client-9froqksxc-shamim-reja232.vercel.app",
   "https://mentorlagbe-server-fy1s.onrender.com",
 ].filter((origin, index, origins): origin is string => {
   return Boolean(origin) && origins.indexOf(origin) === index;
