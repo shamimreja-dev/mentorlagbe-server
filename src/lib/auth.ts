@@ -1,16 +1,33 @@
+
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import mongoose from "mongoose";
 import { env } from "../config/env.js";
 
-const stripTrailingSlash = (url?: string) => url?.trim().replace(/\/+$/, "");
+/* =========================================
+   URL HELPERS
+========================================= */
 
-const normalizeAuthBaseUrl = (url?: string) => {
-  const cleaned = stripTrailingSlash(url);
-  return cleaned ? cleaned.replace(/\/api$/, "") : undefined;
+const stripTrailingSlash = (url?: string): string | undefined => {
+  return url?.trim().replace(/\/+$/, "");
 };
 
-// Get the existing MongoDB connection
+const normalizeAuthBaseUrl = (url?: string): string | undefined => {
+  const cleaned = stripTrailingSlash(url);
+
+  if (!cleaned) return undefined;
+
+  try {
+    return new URL(cleaned).origin;
+  } catch {
+    throw new Error("Invalid BETTER_AUTH_URL");
+  }
+};
+
+/* =========================================
+   MONGODB CONNECTION
+========================================= */
+
 const getMongoDb = () => {
   const db = mongoose.connection.db;
 
@@ -23,50 +40,81 @@ const getMongoDb = () => {
   return db as unknown as Parameters<typeof mongodbAdapter>[0];
 };
 
-const normalizedBaseUrl = normalizeAuthBaseUrl(env.betterAuthUrl);
-const normalizedClientUrl = stripTrailingSlash(env.clientUrl);
+/* =========================================
+   ENVIRONMENT CONFIGURATION
+========================================= */
+
+const normalizedBaseUrl = normalizeAuthBaseUrl(
+  env.betterAuthUrl
+);
+
+const normalizedClientUrl = stripTrailingSlash(
+  env.clientUrl
+);
+
+if (!normalizedBaseUrl) {
+  throw new Error("BETTER_AUTH_URL is missing");
+}
+
+if (!env.betterAuthSecret) {
+  throw new Error("BETTER_AUTH_SECRET is missing");
+}
 
 const isHttpsDeployment =
   env.nodeEnv === "production" ||
-  Boolean(normalizedBaseUrl?.startsWith("https://")) ||
+  normalizedBaseUrl.startsWith("https://") ||
   Boolean(normalizedClientUrl?.startsWith("https://"));
 
-// Allowed frontend & backend origins
+/* =========================================
+   TRUSTED ORIGINS
+========================================= */
+
 const trustedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
-  normalizedClientUrl,
-  normalizedBaseUrl,
-  "https://mentorlagbe-client-khaki.vercel.app",
-  "https://mentorlagbe-client-9froqksxc-shamim-reja232.vercel.app",
-  "https://mentorlagbe-server-fy1s.onrender.com",
-].filter((origin, index, origins): origin is string => {
-  return Boolean(origin) && origins.indexOf(origin) === index;
-});
 
-// Create Better Auth
+  normalizedClientUrl,
+
+  "https://mentorlagbe-client-khaki.vercel.app",
+
+  "https://mentorlagbe-client-9froqksxc-shamim-reja232.vercel.app",
+].filter(
+  (origin, index, origins): origin is string =>
+    Boolean(origin) && origins.indexOf(origin) === index
+);
+
+/* =========================================
+   BETTER AUTH CONFIGURATION
+========================================= */
+
 const createAuth = () =>
   betterAuth({
-    // Backend URL (without /api suffix)
+    // Backend URL
     baseURL: normalizedBaseUrl,
 
     // Better Auth API prefix
     basePath: "/api/better-auth",
 
-    // Authentication secret
+    // Secret
     secret: env.betterAuthSecret,
 
-    // MongoDB database adapter
+    // MongoDB
     database: mongodbAdapter(getMongoDb()),
 
-    // Email and Password Authentication
+    /* =====================================
+       EMAIL & PASSWORD AUTHENTICATION
+    ===================================== */
+
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
       maxPasswordLength: 128,
     },
 
-    // Google OAuth
+    /* =====================================
+       GOOGLE OAUTH
+    ===================================== */
+
     socialProviders: {
       google: {
         clientId: env.googleClientId,
@@ -74,7 +122,29 @@ const createAuth = () =>
       },
     },
 
-    // User configuration
+    /* =====================================
+       ACCOUNT LINKING
+    ===================================== */
+
+    account: {
+      accountLinking: {
+        enabled: true,
+
+        // Google is a trusted OAuth provider.
+        trustedProviders: ["google"],
+
+        // Do not link accounts with different emails.
+        allowDifferentEmails: false,
+
+        // Keep existing user profile information.
+        updateUserInfoOnLink: false,
+      },
+    },
+
+    /* =====================================
+       USER CONFIGURATION
+    ===================================== */
+
     user: {
       additionalFields: {
         role: {
@@ -86,41 +156,57 @@ const createAuth = () =>
       },
     },
 
-    // Allowed origins (supports static & mentorlagbe-client*.vercel.app)
+    /* =====================================
+       TRUSTED ORIGINS
+    ===================================== */
+
     trustedOrigins: (request) => {
       const origin = request?.headers.get("origin");
-      if (!origin) return trustedOrigins;
+
+      if (!origin) {
+        return trustedOrigins;
+      }
 
       const cleanedOrigin = stripTrailingSlash(origin) || "";
+
       if (trustedOrigins.includes(cleanedOrigin)) {
         return trustedOrigins;
       }
 
       try {
         const parsed = new URL(cleanedOrigin);
-        if (
+
+        // Allow only MentorLagbe Vercel preview deployments.
+        const isAllowedVercelPreview =
           parsed.protocol === "https:" &&
-          parsed.hostname.startsWith("mentorlagbe-client") &&
-          parsed.hostname.endsWith(".vercel.app")
-        ) {
+          /^mentorlagbe-client(?:-[a-z0-9-]+)*\.vercel\.app$/i.test(
+            parsed.hostname
+          );
+
+        if (isAllowedVercelPreview) {
           return [...trustedOrigins, cleanedOrigin];
         }
       } catch {
-        // Ignore invalid origin header
+        // Ignore invalid origins.
       }
 
       return trustedOrigins;
     },
 
-    // Cookie configuration for cross-origin OAuth & session requests
+    /* =====================================
+       COOKIE CONFIGURATION
+    ===================================== */
+
     advanced: {
       useSecureCookies: isHttpsDeployment,
+
       defaultCookieAttributes: {
         sameSite: isHttpsDeployment ? "none" : "lax",
         secure: isHttpsDeployment,
         httpOnly: true,
         path: "/",
       },
+
       cookies: {
         state: {
           attributes: {
@@ -134,13 +220,22 @@ const createAuth = () =>
     },
   });
 
-// Better Auth instance type
+/* =========================================
+   BETTER AUTH INSTANCE TYPE
+========================================= */
+
 type BetterAuthInstance = ReturnType<typeof createAuth>;
 
-// Singleton instance
+/* =========================================
+   SINGLETON INSTANCE
+========================================= */
+
 let authInstance: BetterAuthInstance | null = null;
 
-// Export Better Auth instance
+/* =========================================
+   EXPORT AUTH INSTANCE
+========================================= */
+
 export const getAuth = (): BetterAuthInstance => {
   if (!authInstance) {
     authInstance = createAuth();

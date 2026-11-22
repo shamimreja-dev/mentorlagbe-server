@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Response } from "express";
+import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { fromNodeHeaders } from "better-auth/node";
 import { getAuth } from "../lib/auth.js";
@@ -7,6 +7,53 @@ import { env } from "../config/env.js";
 import { User } from "../models/User.js";
 import { AuthRequest, UserRole } from "../types/index.js";
 import { signAccessToken } from "../utils/jwt.js";
+
+interface PendingGoogleExchange {
+  token: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    role: UserRole;
+    plan: "free" | "pro";
+    isVerifiedTutor: boolean;
+    bio: string;
+  };
+  expiresAt: number;
+}
+
+const GOOGLE_EXCHANGE_TTL_MS = 2 * 60 * 1000;
+const pendingGoogleExchanges = new Map<string, PendingGoogleExchange>();
+
+const cleanupExpiredExchanges = (): void => {
+  const now = Date.now();
+  for (const [code, entry] of pendingGoogleExchanges.entries()) {
+    if (entry.expiresAt <= now) {
+      pendingGoogleExchanges.delete(code);
+    }
+  }
+};
+
+const formatUserPayload = (user: {
+  _id: unknown;
+  name: string;
+  email: string;
+  phone: string;
+  role: UserRole;
+  plan: "free" | "pro";
+  isVerifiedTutor: boolean;
+  bio: string;
+}) => ({
+  id: String(user._id),
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  plan: user.plan,
+  isVerifiedTutor: user.isVerifiedTutor,
+  bio: user.bio,
+});
 
 export const registerUser = async (
   req: AuthRequest,
@@ -61,16 +108,7 @@ export const registerUser = async (
       success: true,
       message: "Account registered successfully.",
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        plan: user.plan,
-        isVerifiedTutor: user.isVerifiedTutor,
-        bio: user.bio,
-      },
+      user: formatUserPayload(user),
     });
   } catch (error) {
     console.error("Register error:", error);
@@ -129,16 +167,7 @@ export const loginUser = async (
       success: true,
       message: "Signed in successfully.",
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        plan: user.plan,
-        isVerifiedTutor: user.isVerifiedTutor,
-        bio: user.bio,
-      },
+      user: formatUserPayload(user),
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -154,7 +183,9 @@ export const handleGoogleCallbackSync = async (
   res: Response
 ): Promise<void> => {
   try {
-    const requestedRole: Exclude<UserRole, "admin"> =
+    cleanupExpiredExchanges();
+
+    const initialRoleForNewUser: Exclude<UserRole, "admin"> =
       req.query.role === "tutor" ? "tutor" : "student";
 
     const session = await getAuth().api.getSession({
@@ -173,6 +204,7 @@ export const handleGoogleCallbackSync = async (
     const normalizedEmail = session.user.email.toLowerCase().trim();
     let user = await User.findOne({ email: normalizedEmail });
 
+    // Only set initial role for brand-new users; never overwrite existing users' roles
     if (!user) {
       const randomPassword = crypto.randomBytes(24).toString("hex");
       const hashedPassword = await bcrypt.hash(randomPassword, 10);
@@ -182,14 +214,11 @@ export const handleGoogleCallbackSync = async (
         email: normalizedEmail,
         password: hashedPassword,
         phone: "Not provided",
-        role: requestedRole,
+        role: initialRoleForNewUser,
         plan: "free",
         isVerifiedTutor: false,
         bio: "",
       });
-    } else if (user.role !== "admin" && req.query.role) {
-      user.role = requestedRole;
-      await user.save();
     }
 
     const token = signAccessToken({
@@ -199,23 +228,15 @@ export const handleGoogleCallbackSync = async (
       plan: user.plan,
     });
 
+    const exchangeCode = crypto.randomBytes(24).toString("hex");
+    pendingGoogleExchanges.set(exchangeCode, {
+      token,
+      user: formatUserPayload(user),
+      expiresAt: Date.now() + GOOGLE_EXCHANGE_TTL_MS,
+    });
+
     const redirectUrl = new URL(`${env.clientUrl}/auth/google-callback`);
-    redirectUrl.searchParams.set("token", token);
-    redirectUrl.searchParams.set(
-      "user",
-      encodeURIComponent(
-        JSON.stringify({
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          role: user.role,
-          plan: user.plan,
-          isVerifiedTutor: user.isVerifiedTutor,
-          bio: user.bio,
-        })
-      )
-    );
+    redirectUrl.searchParams.set("code", exchangeCode);
 
     res.redirect(redirectUrl.toString());
   } catch (error) {
@@ -225,6 +246,49 @@ export const handleGoogleCallbackSync = async (
         "Failed to complete Google sign-in."
       )}`
     );
+  }
+};
+
+export const exchangeGoogleSessionCode = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    cleanupExpiredExchanges();
+
+    const code =
+      typeof req.body?.code === "string" ? req.body.code.trim() : "";
+
+    if (!code) {
+      res.status(400).json({
+        success: false,
+        message: "Exchange code is required.",
+      });
+      return;
+    }
+
+    const pending = pendingGoogleExchanges.get(code);
+    pendingGoogleExchanges.delete(code);
+
+    if (!pending || pending.expiresAt <= Date.now()) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid or expired Google sign-in code.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      token: pending.token,
+      user: pending.user,
+    });
+  } catch (error) {
+    console.error("Google code exchange error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to complete Google sign-in session.",
+    });
   }
 };
 
@@ -246,16 +310,7 @@ export const getCurrentUser = async (
 
     res.status(200).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        plan: user.plan,
-        isVerifiedTutor: user.isVerifiedTutor,
-        bio: user.bio,
-      },
+      user: formatUserPayload(user),
     });
   } catch (error) {
     console.error("Get me error:", error);
@@ -297,16 +352,7 @@ export const updateProfile = async (
     res.status(200).json({
       success: true,
       message: "Profile updated successfully.",
-      user: {
-        id: updatedUser._id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        phone: updatedUser.phone,
-        role: updatedUser.role,
-        plan: updatedUser.plan,
-        isVerifiedTutor: updatedUser.isVerifiedTutor,
-        bio: updatedUser.bio,
-      },
+      user: formatUserPayload(updatedUser),
     });
   } catch (error) {
     console.error("Update profile error:", error);
