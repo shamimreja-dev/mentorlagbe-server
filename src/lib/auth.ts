@@ -5,6 +5,11 @@ import { env } from "../config/env.js";
 
 const stripTrailingSlash = (url?: string) => url?.trim().replace(/\/+$/, "");
 
+const normalizeAuthBaseUrl = (url?: string) => {
+  const cleaned = stripTrailingSlash(url);
+  return cleaned ? cleaned.replace(/\/api$/, "") : undefined;
+};
+
 // Get the existing MongoDB connection
 const getMongoDb = () => {
   const db = mongoose.connection.db;
@@ -19,13 +24,14 @@ const getMongoDb = () => {
 };
 
 const isProduction = env.nodeEnv === "production";
-const normalizedBaseUrl = stripTrailingSlash(env.betterAuthUrl);
+const normalizedBaseUrl = normalizeAuthBaseUrl(env.betterAuthUrl);
+const normalizedClientUrl = stripTrailingSlash(env.clientUrl);
 
 // Allowed frontend & backend origins
 const trustedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
-  stripTrailingSlash(env.clientUrl),
+  normalizedClientUrl,
   normalizedBaseUrl,
   "https://mentorlagbe-client-khaki.vercel.app",
   "https://mentorlagbe-client-9froqksxc-shamim-reja232.vercel.app",
@@ -37,7 +43,7 @@ const trustedOrigins = [
 // Create Better Auth
 const createAuth = () =>
   betterAuth({
-    // Backend URL
+    // Backend URL (without /api suffix)
     baseURL: normalizedBaseUrl,
 
     // Better Auth API prefix
@@ -76,8 +82,31 @@ const createAuth = () =>
       },
     },
 
-    // Allowed origins
-    trustedOrigins,
+    // Allowed origins (supports static & mentorlagbe-client*.vercel.app)
+    trustedOrigins: (request) => {
+      const origin = request?.headers.get("origin");
+      if (!origin) return trustedOrigins;
+
+      const cleanedOrigin = stripTrailingSlash(origin) || "";
+      if (trustedOrigins.includes(cleanedOrigin)) {
+        return trustedOrigins;
+      }
+
+      try {
+        const parsed = new URL(cleanedOrigin);
+        if (
+          parsed.protocol === "https:" &&
+          parsed.hostname.startsWith("mentorlagbe-client") &&
+          parsed.hostname.endsWith(".vercel.app")
+        ) {
+          return [...trustedOrigins, cleanedOrigin];
+        }
+      } catch {
+        // Ignore invalid origin header
+      }
+
+      return trustedOrigins;
+    },
 
     // Cookie configuration for cross-origin requests
     advanced: {
